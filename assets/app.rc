@@ -3,8 +3,8 @@
 1 24 "app.manifest"
 
 1 VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,0,1,0
+PRODUCTVERSION  1,0,1,0
 FILEOS          0x40004
 FILETYPE        0x1
 BEGIN
@@ -14,11 +14,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "Zapret PF"
       VALUE "FileDescription",  "Zapret PF"
-      VALUE "FileVersion",      "1.0.0"
+      VALUE "FileVersion",      "1.0.1"
       VALUE "InternalName",     "ZapretPF"
       VALUE "OriginalFilename", "ZapretPF.exe"
       VALUE "ProductName",      "Zapret PF"
-      VALUE "ProductVersion",   "1.0.0"
+      VALUE "ProductVersion",   "1.0.1"
     END
   END
   BLOCK "VarFileInfo"

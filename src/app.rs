@@ -80,6 +80,8 @@ pub struct ZapretApp {
     tray_rx: Option<Receiver<crate::tray::TrayCmd>>,
     quitting: bool,
     hide_once: bool,
+    /// Счётчик вызовов logic() — признак, что интерфейс не завис.
+    frames: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Как часто проверять, что текущий профиль ещё работает.
@@ -123,6 +125,7 @@ impl ZapretApp {
             tray_rx: None,
             quitting: false,
             hide_once: false,
+            frames: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cfg,
         };
         #[cfg(windows)]
@@ -149,15 +152,24 @@ impl ZapretApp {
         app.spawn_status_poll();
         if let Some(l) = instance {
             let ctx = cc.egui_ctx.clone();
+            let frames = app.frames.clone();
             std::thread::spawn(move || {
-                for _ in l.incoming().flatten() {
+                use std::io::Write;
+                for mut s in l.incoming().flatten() {
                     Self::show_window(&ctx);
                     ctx.request_repaint();
+                    // отвечаем «ok», только если интерфейс живой (кадр обработан)
+                    let before = frames.load(Ordering::Relaxed);
+                    let t = Instant::now();
+                    while frames.load(Ordering::Relaxed) == before && t.elapsed() < Duration::from_secs(3) {
+                        ctx.request_repaint();
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    if frames.load(Ordering::Relaxed) != before {
+                        let _ = s.write_all(b"ok");
+                    }
                 }
             });
-        }
-        if app.cfg.check_updates {
-            app.check_updates(false);
         }
         if !paths::zapret_installed() {
             app.notify("Файлы zapret не найдены — нажмите «Скачать zapret»");
@@ -1110,6 +1122,7 @@ fn apply_theme_pref(ctx: &egui::Context, mode: ThemeMode) {
 
 impl eframe::App for ZapretApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frames.fetch_add(1, Ordering::Relaxed);
         self.handle_messages(ctx);
         self.tray_logic(ctx);
         self.maybe_health_check();
