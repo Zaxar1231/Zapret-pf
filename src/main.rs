@@ -2,37 +2,20 @@
 
 mod app;
 mod config;
+mod icon;
 mod paths;
 mod profiles;
 mod sys;
 mod tester;
+#[cfg(windows)]
+mod tray;
 mod theme;
 mod updater;
 mod widgets;
 mod zapret;
 
-/// Иконка окна рисуется программно: кнопка питания на синем круге.
 fn window_icon() -> egui::IconData {
-    let n = 64u32;
-    let mut rgba = vec![0u8; (n * n * 4) as usize];
-    let c = n as f32 / 2.0;
-    for y in 0..n {
-        for x in 0..n {
-            let (dx, dy) = (x as f32 + 0.5 - c, y as f32 + 0.5 - c);
-            let d = (dx * dx + dy * dy).sqrt();
-            let i = ((y * n + x) * 4) as usize;
-            let a = (c - d).clamp(0.0, 1.0);
-            if a <= 0.0 {
-                continue;
-            }
-            let ang = dy.atan2(dx); // -PI..PI, верх = -PI/2
-            let ring = (d - 17.0).abs() < 3.0 && !(ang < -1.0 && ang > -2.14);
-            let bar = dx.abs() < 3.0 && dy < -2.0 && dy > -23.0;
-            let (r, g, b) = if ring || bar { (255, 255, 255) } else { (0x3F, 0x5F, 0xA9) };
-            rgba[i..i + 4].copy_from_slice(&[r, g, b, (a * 255.0) as u8]);
-        }
-    }
-    egui::IconData { rgba, width: n, height: n }
+    egui::IconData { rgba: icon::power_icon_rgba(64, icon::COLOR_ON), width: 64, height: 64 }
 }
 
 /// Порт-«замок» единственного экземпляра. Повторный запуск просит открытое окно показаться.

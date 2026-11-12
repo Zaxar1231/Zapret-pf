@@ -73,6 +73,13 @@ pub struct ZapretApp {
     health_failures: u32,
     crash_times: Vec<Instant>,
     failover_from: Option<String>,
+    // трей
+    #[cfg(windows)]
+    tray: Option<crate::tray::Tray>,
+    #[cfg(windows)]
+    tray_rx: Option<Receiver<crate::tray::TrayCmd>>,
+    quitting: bool,
+    hide_once: bool,
 }
 
 /// Как часто проверять, что текущий профиль ещё работает.
@@ -110,8 +117,27 @@ impl ZapretApp {
             health_failures: 0,
             crash_times: Vec::new(),
             failover_from: None,
+            #[cfg(windows)]
+            tray: None,
+            #[cfg(windows)]
+            tray_rx: None,
+            quitting: false,
+            hide_once: false,
             cfg,
         };
+        #[cfg(windows)]
+        {
+            let (ttx, trx) = channel();
+            app.tray = crate::tray::Tray::new(ttx, cc.egui_ctx.clone());
+            if app.tray.is_some() {
+                app.tray_rx = Some(trx);
+                // при автозапуске сразу прячемся в трей
+                if app.minimize_once {
+                    app.minimize_once = false;
+                    app.hide_once = true;
+                }
+            }
+        }
         if app.connected {
             app.connected_since = Some(Instant::now());
         }
@@ -125,9 +151,7 @@ impl ZapretApp {
             let ctx = cc.egui_ctx.clone();
             std::thread::spawn(move || {
                 for _ in l.incoming().flatten() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    Self::show_window(&ctx);
                     ctx.request_repaint();
                 }
             });
@@ -499,7 +523,10 @@ impl ZapretApp {
                     }
                 }
                 Msg::AppUpdateStarted(r) => match r {
-                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Ok(()) => {
+                        self.quitting = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     Err(e) => {
                         self.busy = Busy::None;
                         self.notify(format!("Ошибка обновления: {e}"));
@@ -902,7 +929,12 @@ impl ZapretApp {
             self.cfg.save();
         }
         let mut v = self.cfg.disconnect_on_exit;
-        Self::setting_row(ui, pal, "Отключать при закрытии", "Иначе обход продолжит работать в фоне", |ui| {
+        let sub = if self.has_tray() {
+            "При выходе через меню в трее. Крестик сворачивает окно в трей"
+        } else {
+            "Иначе обход продолжит работать в фоне"
+        };
+        Self::setting_row(ui, pal, "Отключать при выходе", sub, |ui| {
             widgets::switch(ui, pal, &mut v);
         });
         if v != self.cfg.disconnect_on_exit {
@@ -1079,6 +1111,7 @@ fn apply_theme_pref(ctx: &egui::Context, mode: ThemeMode) {
 impl eframe::App for ZapretApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_messages(ctx);
+        self.tray_logic(ctx);
         self.maybe_health_check();
         if self.cfg.auto_switch && self.connected {
             // logic() вызывается и при свёрнутом окне — будим его для проверок
@@ -1135,6 +1168,66 @@ impl eframe::App for ZapretApp {
 }
 
 impl ZapretApp {
+    fn has_tray(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.tray.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+
+    fn show_window(ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    /// Команды из трея, сворачивание в трей по крестику, обновление иконки.
+    fn tray_logic(&mut self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        {
+            let cmds: Vec<_> = self.tray_rx.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+            for c in cmds {
+                match c {
+                    crate::tray::TrayCmd::Show => Self::show_window(ctx),
+                    crate::tray::TrayCmd::Toggle => self.toggle(),
+                    crate::tray::TrayCmd::Quit => {
+                        self.quitting = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+            let status = match &self.busy {
+                Busy::Connecting => "подключение…".to_string(),
+                Busy::Disconnecting => "отключение…".to_string(),
+                Busy::Testing { auto: true, .. } => "поиск рабочего профиля…".to_string(),
+                Busy::Testing { .. } => "подбор профиля…".to_string(),
+                Busy::UpdatingZapret(_) | Busy::UpdatingApp(_) => "обновление…".to_string(),
+                Busy::None if self.connected => {
+                    format!("подключено · {}", self.selected().map(|p| p.title.clone()).unwrap_or_default())
+                }
+                Busy::None => "не подключено".to_string(),
+            };
+            let enabled = matches!(self.busy, Busy::None) && paths::zapret_installed();
+            let connected = self.connected;
+            if let Some(t) = self.tray.as_mut() {
+                t.update(connected, &status, enabled);
+            }
+        }
+        if self.hide_once {
+            self.hide_once = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        if self.has_tray() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
+            // крестик прячет окно в трей; выход — через меню иконки
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+    }
+
     fn disconnect_on_exit_needed(&self) -> bool {
         self.cfg.disconnect_on_exit || matches!(self.busy, Busy::Testing { .. })
     }
