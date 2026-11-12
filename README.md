@@ -108,7 +108,7 @@ rustup target add x86_64-pc-windows-gnu
 ### Выпуск новой версии
 
 1. Поднимите `version` в `Cargo.toml` (и при желании в `assets/app.rc`).
-2. Создайте и отправьте тег: `git tag v1.0.1 && git push origin v1.0.1`.
+2. Создайте и отправьте тег `git tag v1.0.1 && git push origin v1.0.1` или запустите workflow **Build** вручную (Actions → Build → Run workflow) с галочкой «release».
 3. GitHub Actions соберёт установщик и портативный архив и опубликует релиз. Установленные копии приложения увидят обновление при следующем запуске.
 
 ## Структура проекта
